@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Metadata browser</title>
+    <style>
+body    {
+    background-color: black;
+    color: white;
+    margin: 2cm;
+    font-family: sans-serif;
+}
+
+.bar    {
+    display: inline-block;
+    background-color: #c44;
+    color: black;
+    margin-right: 1em;
+    text-align: right;
+    height: 1em;
+}
+
+.count  {
+    font-weight: bold;
+}
+
+.name   {
+    color: #fc9;
+}
+
+table   {
+    width: 100%;
+}
+
+td      {
+    vertical-align: top;
+    margin: 0.5cm;
+}
+
+#debug  {
+    font-size: 6pt;
+    color: grey;
+    visibility: hidden;
+}
+
+    </style>
+    <script>
+SLURP = (function() {
+    var APP_ROOT = "http://next-sapi-capi-slurp.herokuapp.com";
+
+    var METADATUMS = null;
+
+    var get_data = function(path, cb) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET',APP_ROOT+path);
+
+        xhr.onload = function(e) {
+            if (this.status == 200) {
+                cb( JSON.parse(this.responseText) );
+            }
+        }
+
+        xhr.send()
+    }
+
+    var init = function(cb) {
+        get_data("/metadatums_freq/by_type",function(result) {
+            METADATUMS = result;
+            cb();
+        });
+    }
+
+    var get_bars = function(config) {
+        if (!config) {
+            config = {};
+        }
+        if (!config["types"]) {
+            config["types"] = [];
+        }
+        if (!config["filter"]) {
+            config["filter"] = "";
+        }
+        if (!config["freq_range"]) {
+            config["freq_range"] = {};
+        }
+        if (!config["freq_range"]["max"]) {
+            config["freq_range"]["max"] = -1;
+        }
+        if (!config["freq_range"]["min"]) {
+            config["freq_range"]["min"] = -1;
+        }
+        if (!config["bar_count"]) {
+            config["bar_count"] = {};
+        }
+        if (!config["bar_count"]["max"]) {
+            config["bar_count"]["max"] = -1;
+        }
+
+        var filter_regexp = new RegExp(config["filter"],"i");
+
+        var result = "<h1>Slurped articles by frequency</h1><table><tr>";
+
+        for (var i=0; i<config["types"].length; i++) {
+            result += "<th>"+config["types"][i]+"</th>";
+        }
+
+        result += "</tr><tr>";
+
+        for (var i=0; i<config["types"].length; i++) {
+            var type_name = config["types"][i];
+
+            var data = METADATUMS["metadatums_freq_by_type"][type_name];
+
+            var values = [];
+            var max_value = 0;
+            var type_bars="";
+
+            if (data && data.length>0) {
+                var bar_count = data.length;
+                if (bar_count > config["bar_count"]["max"]) {
+                    bar_count = config["bar_count"]["max"];
+                }
+
+                for (var j=0; j<data.length; j++) {
+                    if ((config["freq_range"]["max"]<0 || data[j][1]<config["freq_range"]["max"])
+                        &&
+                        (data[j][1]>config["freq_range"]["min"])
+                       ){
+
+                        var name = data[j][0];
+                        if (name.startsWith(type_name)) {
+                            name = name.substr(type_name.length+1)
+                        }
+
+                        if (filter_regexp.test(name)) {
+                            values.push([name, data[j][1]]);
+                            if (data[j][1] > max_value) {
+                                max_value = data[j][1];
+                            }
+                            if (bar_count--==0) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (values && values.length>0) {
+                    for (var k=0; k<values.length; k++) {
+                        var percent = values[k][1] * 100 / max_value;
+                        type_bars += "<p><div class=\"bar\" style=\"width: "+percent+"%\"></div><div><span class=\"count\">"+values[k][1]+"</span>,<span class=\"name\">"+values[k][0]+"</span></div></p>";
+                    }
+                } else {
+                    type_bars="<p class=\"empty\">(No matches for "+type_name+")</p>";
+                }
+            } else {
+                type_bars="<p class=\"empty\">(No data for "+type_name+")</p>";
+            }            
+
+            result += "<td id=\"type_"+type_name+"\">"+type_bars+"</td>";
+        }
+
+        result += "</tr></table>";
+        return result;
+    }
+
+    var update = function(config) {
+        document.getElementById("bars").innerHTML = get_bars(config);
+        document.getElementById("debug").innerHTML = JSON.stringify(METADATUMS);
+    }
+    
+    var get_types = function() {
+        return Object.keys( METADATUMS["metadatums_freq_by_type"] );
+    }
+
+    return {
+        init: init,
+        update: update,
+        get_types: get_types
+    };
+
+})();
+
+
+rebuild_hash = function() {
+    var new_hash = "";
+
+    new_hash += "types="+document.getElementById("types").value;
+    new_hash += "&filter="+document.getElementById("filter").value;
+
+    console.debug("Rebuilt hash "+new_hash);
+    window.location.hash = new_hash;
+}
+
+parse_hash = function(hash) {
+    if (hash.startsWith("#")) {
+        hash = hash.substr(1)
+    }
+
+    hash = hash.split("&");
+
+    var obj = {}
+    for (i=0; i<hash.length; i++) {
+        prop = hash[i].split("=")
+        if (prop.length >= 2) {
+            obj[prop[0]] = prop.slice(1).join()
+        }
+    }
+
+    var types = obj["types"].split(",");
+
+    for (i=0; i<types.length; i++) {
+        types[i] = types[i].trim();
+    }
+
+    var config = {
+        "types": obj["types"].split(","),
+        "filter": obj["filter"].trim()
+    };
+
+    console.debug("New config "+JSON.stringify(config));
+
+    return config
+}
+
+init = function() {
+    document.getElementById("types").addEventListener("change",function(e) {
+        rebuild_hash();
+    });
+
+    document.getElementById("filter").addEventListener("change",function(e) {
+        rebuild_hash();
+    });
+
+    if (!window.location.hash) {
+        rebuild_hash();
+    }
+    window.addEventListener("hashchange", function(e) {
+        SLURP.update(parse_hash(window.location.hash));
+    });
+
+    SLURP.init(function() {
+        document.getElementById("types_available").firstChild.nodeValue = SLURP.get_types().join(", ");
+        SLURP.update(parse_hash(window.location.hash));
+    });
+
+};
+    </script>
+</head>
+<body onload="init()">
+    <p>
+        Metadata types (comma separated): <input type="text" id="types" value="sections"></input>
+    </p>
+    <p>
+        Metadata types available: <span id="types_available">?</span>
+    </p>
+    <p>Filter values (regexp): <input type="text" id="filter" value=""></input></p>
+    <div id="bars">Rendering...
+    </div>
+    <div id="debug">
+    </div>
+</body>
+</html>
